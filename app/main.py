@@ -35,9 +35,11 @@ _agent_task: asyncio.Task | None = None
 async def startup():
     global _agent, _agent_task
     summarizer = ArticleSummarizer(
-        api_key=settings.anthropic_api_key,
+        api_key=settings.anthropic_api_key,  # None → no-LLM fallback mode
         model=settings.claude_model,
     )
+    if not settings.anthropic_api_key:
+        logger.warning("ANTHROPIC_API_KEY not set — running in no-LLM fallback mode")
     feeds = [
         {"name": "BBC News", "url": "https://feeds.bbci.co.uk/news/rss.xml"},
         {"name": "Reuters", "url": "https://feeds.reuters.com/reuters/topNews"},

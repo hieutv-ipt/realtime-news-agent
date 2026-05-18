@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.news_fetcher import Article, _make_id, fetch_rss_feed
 
@@ -49,13 +49,14 @@ SAMPLE_RSS = """<?xml version="1.0" encoding="UTF-8"?>
 
 @pytest.mark.asyncio
 async def test_fetch_rss_feed_parses_items():
-    mock_response = AsyncMock()
+    mock_response = MagicMock()
     mock_response.text = AsyncMock(return_value=SAMPLE_RSS)
     mock_response.__aenter__ = AsyncMock(return_value=mock_response)
     mock_response.__aexit__ = AsyncMock(return_value=False)
 
-    mock_session = AsyncMock()
-    mock_session.get = AsyncMock(return_value=mock_response)
+    mock_session = MagicMock()
+    # session.get() must return the context manager object directly (not a coroutine)
+    mock_session.get = MagicMock(return_value=mock_response)
 
     articles = await fetch_rss_feed(mock_session, "https://fake.feed/rss", "TestSource")
     assert len(articles) == 1

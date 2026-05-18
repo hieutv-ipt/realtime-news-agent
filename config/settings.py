@@ -1,11 +1,12 @@
 from pydantic_settings import BaseSettings
 from pydantic import Field
-from typing import List
+from typing import List, Optional
 
 
 class Settings(BaseSettings):
-    # Anthropic
-    anthropic_api_key: str = Field(..., env="ANTHROPIC_API_KEY")
+    # Anthropic (optional — app runs in no-LLM mode when absent)
+    anthropic_api_key: Optional[str] = Field(None, env="ANTHROPIC_API_KEY")
+    openai_api_key: Optional[str] = Field(None, env="OPENAI_API_KEY")
     claude_model: str = Field("claude-sonnet-4-6", env="CLAUDE_MODEL")
 
     # NewsAPI

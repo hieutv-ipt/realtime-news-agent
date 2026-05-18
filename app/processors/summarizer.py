@@ -2,9 +2,8 @@ import json
 import logging
 from typing import Optional
 
-import anthropic
-
 from app.news_fetcher import Article
+from app.processors.classifier import classify_by_keywords
 
 logger = logging.getLogger(__name__)
 
@@ -20,11 +19,20 @@ Respond ONLY with valid JSON matching this schema:
 
 
 class ArticleSummarizer:
-    def __init__(self, api_key: str, model: str = "claude-sonnet-4-6"):
-        self._client = anthropic.Anthropic(api_key=api_key)
+    def __init__(self, api_key: Optional[str] = None, model: str = "claude-sonnet-4-6"):
         self._model = model
+        self._client = None
+        if api_key:
+            try:
+                import anthropic
+                self._client = anthropic.Anthropic(api_key=api_key)
+            except Exception as exc:
+                logger.warning("Could not initialise Anthropic client: %s", exc)
 
     def analyze(self, article: Article) -> Optional[dict]:
+        if self._client is None:
+            return None
+        import anthropic
         user_message = f"Title: {article.title}\n\nContent: {article.content or article.title}"
         try:
             response = self._client.messages.create(
@@ -32,7 +40,6 @@ class ArticleSummarizer:
                 max_tokens=512,
                 system=SYSTEM_PROMPT,
                 messages=[{"role": "user", "content": user_message}],
-                # Enable prompt caching for the system prompt on repeated calls
                 extra_headers={"anthropic-beta": "prompt-caching-2024-07-31"},
             )
             text = response.content[0].text.strip()
@@ -51,4 +58,7 @@ class ArticleSummarizer:
             article.sentiment = result.get("sentiment")
             article.entities = result.get("entities", [])
             article.importance = int(result.get("importance", 1))
+        else:
+            # Fallback: keyword-based category, no LLM summary
+            article.category = classify_by_keywords(f"{article.title} {article.content}")
         return article
