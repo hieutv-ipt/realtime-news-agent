@@ -254,6 +254,92 @@ def test_ask_sources_contain_url(seeded_client):
         assert "title" in src
 
 
+# ── /ask topic relevance ─────────────────────────────────────────────────────
+
+@pytest.fixture
+def mixed_client():
+    """Store with articles from every category including high-importance entertainment."""
+    _test_store.put(_article(20, "finance",       importance=8))
+    _test_store.put(_article(21, "politics",      importance=7))
+    _test_store.put(_article(22, "world",         importance=6))
+    _test_store.put(_article(23, "entertainment", importance=9))  # High score but wrong topic
+    _test_store.put(_article(24, "daily_life",    importance=8))  # High score but wrong topic
+    _test_store.put(_article(25, "technology",    importance=5))
+    return TestClient(_app)
+
+
+def test_ask_finance_politics_excludes_entertainment_and_daily_life(mixed_client):
+    """Asking about tài chính + chính trị must not return entertainment or daily_life."""
+    r = mixed_client.post(
+        "/api/v1/ask",
+        json={"question": "Hôm nay có tin gì quan trọng về tài chính và chính trị?", "language": "vi"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    source_cats = {s["category"] for s in body["sources"]}
+    assert "entertainment" not in source_cats, f"entertainment leaked into sources: {source_cats}"
+    assert "daily_life" not in source_cats, f"daily_life leaked into sources: {source_cats}"
+    # Finance and/or political categories must be present
+    assert source_cats & {"finance", "politics", "world", "vietnam"}, (
+        f"Expected finance/politics/world/vietnam in sources, got: {source_cats}"
+    )
+
+
+def test_ask_finance_only_returns_finance(mixed_client):
+    """Question about finance only → only finance articles in sources."""
+    r = mixed_client.post(
+        "/api/v1/ask",
+        json={"question": "stock market and interest rate news", "language": "en"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    source_cats = {s["category"] for s in body["sources"]}
+    assert source_cats == {"finance"} or source_cats.issubset({"finance"}), (
+        f"Expected only finance, got: {source_cats}"
+    )
+    assert "topics_detected" in body
+    assert "finance" in body["topics_detected"]
+
+
+def test_ask_unknown_topic_falls_back_to_top_important(mixed_client):
+    """A question with no recognisable topic keywords returns top articles by importance."""
+    r = mixed_client.post(
+        "/api/v1/ask",
+        json={"question": "xyz123 completely unrecognised topic qqq", "language": "en"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # topics_detected must be empty
+    assert body["topics_detected"] == []
+    # Should still return something (top by importance)
+    assert body["article_count"] > 0
+    # Most-important article should appear first in sources
+    scores = [s.get("importance_score", 1) for s in body["sources"]]
+    all_importances = sorted(
+        [a.get("importance", 1) for a in _test_store.get_recent(100)], reverse=True
+    )
+    assert scores[0] == all_importances[0]
+
+
+def test_ask_no_match_returns_vi_message(client):
+    """When asking about finance but no finance articles exist, return clear Vietnamese message."""
+    # Store only has technology articles from clear_store autouse fixture
+    _test_store.put(_article(30, "technology", importance=5))
+
+    r = client.post(
+        "/api/v1/ask",
+        json={"question": "lãi suất ngân hàng trung ương hôm nay?", "language": "vi"},
+    )
+    assert r.status_code == 200
+    body = r.json()
+    # No finance articles exist → answer must say so
+    source_cats = {s["category"] for s in body["sources"]}
+    assert "finance" not in source_cats
+    assert body["article_count"] == 0
+    # Message should mention running ingest or adding sources
+    assert "ingest" in body["answer"].lower() or "rss" in body["answer"].lower() or "chưa có" in body["answer"]
+
+
 # ── Redis unavailable does not crash core endpoints ───────────────────────────
 
 def test_health_when_redis_down(client):

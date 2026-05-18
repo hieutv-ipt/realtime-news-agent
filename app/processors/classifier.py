@@ -20,7 +20,8 @@ _KEYWORD_MAP: dict[str, list[str]] = {
         "sanctions", "diplomacy", "diplomatic", "treaty", "bilateral",
         "coup", "protest", "democracy", "authoritarian", "referendum", "constitution",
         "foreign minister", "secretary of state", "white house", "kremlin",
-        "european commission", "united nations", "nato", "summit",
+        "european commission", "united nations", "nato",
+        "g7 summit", "g20 summit", "nato summit", "peace summit", "bilateral summit",
         "political party", "cabinet", "governor", "mayor", "senator",
     ],
     "finance": [
@@ -98,7 +99,7 @@ _MED_IMPACT_KW = [
     "announced", "launches", "unveil", "report shows", "study finds",
     "deal signed", "merger", "acquisition", "investigation opens",
     "arrested", "charged", "indicted", "protest", "reform proposed",
-    "regulation update", "new law", "policy update", "summit held",
+    "regulation update", "new law", "policy update",
     "conference", "agreement reached", "joint statement",
 ]
 
