@@ -1,6 +1,6 @@
 import pytest
 from datetime import datetime
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from app.agent import NewsAgent
 from app.news_fetcher import Article
@@ -20,9 +20,9 @@ def _make_article(n: int) -> Article:
 
 @pytest.fixture
 def mock_summarizer():
-    summarizer = MagicMock()
-    summarizer.enrich = lambda a: a
-    return summarizer
+    s = MagicMock()
+    s.enrich = lambda a: a
+    return s
 
 
 @pytest.fixture
@@ -69,7 +69,6 @@ async def test_seen_articles_not_republished(agent):
 
 @pytest.mark.asyncio
 async def test_redis_unavailable_does_not_crash(agent, monkeypatch):
-    """When Redis is None the agent should still enrich and store articles."""
     private_store = InMemoryStore()
     monkeypatch.setattr("app.agent.store", private_store)
 
@@ -83,7 +82,6 @@ async def test_redis_unavailable_does_not_crash(agent, monkeypatch):
 
 @pytest.mark.asyncio
 async def test_redis_failure_mid_cycle_falls_back(agent, monkeypatch):
-    """If Redis raises during publish, redis is marked None and agent continues."""
     private_store = InMemoryStore()
     monkeypatch.setattr("app.agent.store", private_store)
 
@@ -91,10 +89,51 @@ async def test_redis_failure_mid_cycle_falls_back(agent, monkeypatch):
     failing_redis.publish = AsyncMock(side_effect=ConnectionError("refused"))
     agent._redis = failing_redis
 
-    articles = [_make_article(0)]
-    await agent._process_batch(articles)
+    await agent._process_batch([_make_article(0)])
 
-    # article still landed in the in-memory store
     assert private_store.get("id0") is not None
-    # redis marked unavailable after failure
     assert agent._redis is None
+
+
+@pytest.mark.asyncio
+async def test_run_once_returns_stats(agent, monkeypatch):
+    private_store = InMemoryStore()
+    monkeypatch.setattr("app.agent.store", private_store)
+    agent._redis = None
+
+    from app.news_fetcher import Article as _Article
+    from datetime import datetime
+
+    async def mock_fetch_tracked(session, url, name):
+        return [_make_article(0), _make_article(1)], None
+
+    monkeypatch.setattr("app.agent.fetch_rss_tracked", mock_fetch_tracked)
+    # Give the agent one feed so run_once has something to iterate
+    agent._feeds = [{"name": "TestFeed", "url": "https://fake.example/rss"}]
+
+    result = await agent.run_once()
+
+    assert result["sources_attempted"] == 1
+    assert result["sources_failed"] == 0
+    assert result["fetched_count"] == 2
+    assert result["stored_count"] == 2
+    assert result["skipped_duplicates"] == 0
+
+
+@pytest.mark.asyncio
+async def test_run_once_tracks_feed_failure(agent, monkeypatch):
+    private_store = InMemoryStore()
+    monkeypatch.setattr("app.agent.store", private_store)
+    agent._redis = None
+
+    async def mock_fetch_tracked_fail(session, url, name):
+        return [], "Connection refused"
+
+    monkeypatch.setattr("app.agent.fetch_rss_tracked", mock_fetch_tracked_fail)
+    agent._feeds = [{"name": "BrokenFeed", "url": "https://broken.example/rss"}]
+
+    result = await agent.run_once()
+
+    assert result["sources_failed"] == 1
+    assert len(result["errors"]) == 1
+    assert "BrokenFeed" in result["errors"][0]

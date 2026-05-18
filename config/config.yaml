@@ -4,31 +4,41 @@ app:
   description: Realtime news aggregation and analysis agent powered by Claude
 
 agent:
-  system_prompt: |
-    You are a professional news analyst. For each article provided, produce:
-    1. A concise 2-3 sentence summary
-    2. The primary category (politics, technology, business, science, health, sports, entertainment, world)
-    3. A sentiment score: positive, neutral, or negative
-    4. Three key entities (people, organizations, or locations) mentioned
-    5. An importance score from 1 (minor) to 5 (breaking/major)
-
-    Respond ONLY with valid JSON matching this schema:
-    {
-      "summary": "...",
-      "category": "...",
-      "sentiment": "positive|neutral|negative",
-      "entities": ["...", "...", "..."],
-      "importance": 1-5
-    }
+  system_prompt_categories: "politics, finance, daily_life, technology, world, vietnam, entertainment, other"
+  importance_scale: "1 (trivial) to 10 (breaking/critical)"
 
 sources:
   rss:
-    - name: BBC News
-      url: https://feeds.bbci.co.uk/news/rss.xml
-    - name: Reuters
-      url: https://feeds.reuters.com/reuters/topNews
-    - name: NYT
+    # ── International ────────────────────────────────────────────────────────
+    - name: BBC World
+      url: https://feeds.bbci.co.uk/news/world/rss.xml
+    - name: BBC Technology
+      url: https://feeds.bbci.co.uk/news/technology/rss.xml
+    - name: BBC Business
+      url: https://feeds.bbci.co.uk/news/business/rss.xml
+    - name: NYT Home
       url: https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml
+
+    # ── Vietnam ──────────────────────────────────────────────────────────────
+    - name: VnExpress Thời sự
+      url: https://vnexpress.net/rss/tin-tuc-thoi-su.rss
+    - name: VnExpress Kinh doanh
+      url: https://vnexpress.net/rss/kinh-doanh.rss
+    - name: VnExpress Thế giới
+      url: https://vnexpress.net/rss/the-gioi.rss
+    - name: VnExpress Đời sống
+      url: https://vnexpress.net/rss/doi-song.rss
+
+    # ── Finance / Crypto ─────────────────────────────────────────────────────
+    # CoinDesk RSS (uncomment if needed)
+    # - name: CoinDesk
+    #   url: https://www.coindesk.com/arc/outboundfeeds/rss/
+
+    # ── Optional / RSSHub placeholders (comment-only — requires own instance) ─
+    # - name: Tuoi Tre (via RSSHub)
+    #   url: https://rsshub.app/tuoitre/latest
+    # - name: Thanh Nien (via RSSHub)
+    #   url: https://rsshub.app/thanhnien/news/thoi-su
 
 cache:
   article_ttl_seconds: 3600

@@ -4,9 +4,10 @@ import logging
 import time
 from typing import Set
 
+import aiohttp
 import redis.asyncio as aioredis
 
-from app.news_fetcher import Article, fetch_all_feeds
+from app.news_fetcher import Article, fetch_all_feeds, fetch_rss_tracked
 from app.processors.summarizer import ArticleSummarizer
 from app.store import store
 
@@ -51,12 +52,9 @@ class NewsAgent:
 
     async def _publish(self, article: Article) -> None:
         data = article.to_dict()
-        # Always persist to the in-memory store so REST endpoints work without Redis
         store.put(data)
-
         if self._redis is None:
             return
-
         payload = json.dumps(data)
         try:
             await self._redis.publish(self._channel, payload)
@@ -64,8 +62,15 @@ class NewsAgent:
             await self._redis.lpush("articles:recent", article.id)
             await self._redis.ltrim("articles:recent", 0, 199)
         except Exception as exc:
-            logger.warning("Redis write failed (%s) — marking unavailable, in-memory store still updated", exc)
+            logger.warning("Redis write failed (%s) — in-memory store still updated", exc)
             self._redis = None
+
+    async def _enrich_and_publish(self, article: Article) -> None:
+        loop = asyncio.get_running_loop()
+        enriched = await loop.run_in_executor(None, self._summarizer.enrich, article)
+        self._seen_ids.add(enriched.id)
+        await self._publish(enriched)
+        logger.info("[%s] %s (importance=%d)", enriched.category, enriched.title[:80], enriched.importance)
 
     async def _process_batch(self, articles: list[Article]) -> None:
         new_articles = [a for a in articles if a.id not in self._seen_ids]
@@ -73,12 +78,41 @@ class NewsAgent:
             logger.debug("No new articles in this batch")
             return
         logger.info("Processing %d new articles", len(new_articles))
-        loop = asyncio.get_running_loop()
         for article in new_articles:
-            enriched = await loop.run_in_executor(None, self._summarizer.enrich, article)
-            self._seen_ids.add(enriched.id)
-            await self._publish(enriched)
-            logger.info("[%s] %s (importance=%d)", enriched.category, enriched.title[:80], enriched.importance)
+            await self._enrich_and_publish(article)
+
+    async def run_once(self) -> dict:
+        """Run one ingest cycle and return stats. Used by POST /ingest/run."""
+        sources_attempted = len(self._feeds)
+        sources_failed = 0
+        errors: list[str] = []
+        all_articles: list[Article] = []
+
+        async with aiohttp.ClientSession() as session:
+            for feed in self._feeds:
+                articles, err = await fetch_rss_tracked(session, feed["url"], feed["name"])
+                all_articles.extend(articles)
+                if err:
+                    sources_failed += 1
+                    errors.append(f"{feed['name']}: {err}")
+
+        all_articles.sort(key=lambda a: a.published_at, reverse=True)
+        all_articles = all_articles[: self._max_articles]
+
+        new_articles = [a for a in all_articles if a.id not in self._seen_ids]
+        skipped = len(all_articles) - len(new_articles)
+
+        for article in new_articles:
+            await self._enrich_and_publish(article)
+
+        return {
+            "fetched_count": len(all_articles),
+            "stored_count": len(new_articles),
+            "skipped_duplicates": skipped,
+            "sources_attempted": sources_attempted,
+            "sources_failed": sources_failed,
+            "errors": errors,
+        }
 
     async def run(self) -> None:
         await self._try_connect_redis()

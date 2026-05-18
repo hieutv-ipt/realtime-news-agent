@@ -3,7 +3,7 @@ import hashlib
 import logging
 from dataclasses import dataclass, field
 from datetime import datetime
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 import aiohttp
 import feedparser
@@ -46,35 +46,57 @@ def _make_id(url: str) -> str:
     return hashlib.sha256(url.encode()).hexdigest()[:16]
 
 
-async def fetch_rss_feed(session: aiohttp.ClientSession, feed_url: str, source_name: str) -> List[Article]:
+def _parse_entries(raw: str, source_name: str) -> List[Article]:
+    """Parse feedparser-compatible RSS/Atom text into Article objects."""
     articles: List[Article] = []
+    parsed = feedparser.parse(raw)
+    for entry in parsed.entries:
+        url = entry.get("link", "")
+        if not url:
+            continue
+        published = entry.get("published_parsed") or entry.get("updated_parsed")
+        pub_dt = datetime(*published[:6]) if published else datetime.utcnow()
+        content = ""
+        if hasattr(entry, "summary"):
+            soup = BeautifulSoup(entry.summary, "lxml")
+            content = soup.get_text(separator=" ", strip=True)
+        articles.append(
+            Article(
+                id=_make_id(url),
+                title=entry.get("title", "Untitled"),
+                url=url,
+                source=source_name,
+                published_at=pub_dt,
+                content=content,
+            )
+        )
+    return articles
+
+
+async def fetch_rss_feed(
+    session: aiohttp.ClientSession, feed_url: str, source_name: str
+) -> List[Article]:
+    """Fetch and parse a feed, returning [] on any error."""
     try:
         async with session.get(feed_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
             raw = await resp.text()
-        parsed = feedparser.parse(raw)
-        for entry in parsed.entries:
-            url = entry.get("link", "")
-            if not url:
-                continue
-            published = entry.get("published_parsed") or entry.get("updated_parsed")
-            pub_dt = datetime(*published[:6]) if published else datetime.utcnow()
-            content = ""
-            if hasattr(entry, "summary"):
-                soup = BeautifulSoup(entry.summary, "lxml")
-                content = soup.get_text(separator=" ", strip=True)
-            articles.append(
-                Article(
-                    id=_make_id(url),
-                    title=entry.get("title", "Untitled"),
-                    url=url,
-                    source=source_name,
-                    published_at=pub_dt,
-                    content=content,
-                )
-            )
+        return _parse_entries(raw, source_name)
     except Exception as exc:
         logger.warning("Failed to fetch feed %s: %s", feed_url, exc)
-    return articles
+        return []
+
+
+async def fetch_rss_tracked(
+    session: aiohttp.ClientSession, feed_url: str, source_name: str
+) -> Tuple[List[Article], Optional[str]]:
+    """Like fetch_rss_feed but returns (articles, error_msg) for caller stats."""
+    try:
+        async with session.get(feed_url, timeout=aiohttp.ClientTimeout(total=15)) as resp:
+            raw = await resp.text()
+        return _parse_entries(raw, source_name), None
+    except Exception as exc:
+        logger.warning("Failed to fetch feed %s: %s", feed_url, exc)
+        return [], str(exc)
 
 
 async def fetch_all_feeds(feeds: List[dict], max_articles: int = 20) -> List[Article]:

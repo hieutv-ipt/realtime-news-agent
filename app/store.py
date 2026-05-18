@@ -18,12 +18,10 @@ class InMemoryStore:
         aid = article["id"]
         self._articles[aid] = article
         if aid in self._recent:
-            # Move to front without duplicating
             tmp = [x for x in self._recent if x != aid]
             self._recent.clear()
             self._recent.extend(tmp)
         self._recent.appendleft(aid)
-        # Evict articles that fell off the deque
         live = set(self._recent)
         for key in list(self._articles):
             if key not in live:
@@ -42,6 +40,10 @@ class InMemoryStore:
         ids = list(self._recent)[:limit]
         return [self._articles[i] for i in ids if i in self._articles]
 
+    def clear(self) -> None:
+        self._articles.clear()
+        self._recent.clear()
+
     def subscribe(self) -> "asyncio.Queue[str]":
         q: asyncio.Queue = asyncio.Queue(maxsize=100)
         self._subscribers.append(q)
@@ -54,5 +56,4 @@ class InMemoryStore:
             pass
 
 
-# Module-level singleton shared by agent and routes
 store = InMemoryStore()
