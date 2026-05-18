@@ -1,0 +1,35 @@
+app:
+  name: realtime-news-agent
+  version: "1.0.0"
+  description: Realtime news aggregation and analysis agent powered by Claude
+
+agent:
+  system_prompt: |
+    You are a professional news analyst. For each article provided, produce:
+    1. A concise 2-3 sentence summary
+    2. The primary category (politics, technology, business, science, health, sports, entertainment, world)
+    3. A sentiment score: positive, neutral, or negative
+    4. Three key entities (people, organizations, or locations) mentioned
+    5. An importance score from 1 (minor) to 5 (breaking/major)
+
+    Respond ONLY with valid JSON matching this schema:
+    {
+      "summary": "...",
+      "category": "...",
+      "sentiment": "positive|neutral|negative",
+      "entities": ["...", "...", "..."],
+      "importance": 1-5
+    }
+
+sources:
+  rss:
+    - name: BBC News
+      url: https://feeds.bbci.co.uk/news/rss.xml
+    - name: Reuters
+      url: https://feeds.reuters.com/reuters/topNews
+    - name: NYT
+      url: https://rss.nytimes.com/services/xml/rss/nyt/HomePage.xml
+
+cache:
+  article_ttl_seconds: 3600
+  analysis_ttl_seconds: 86400
