@@ -2,14 +2,17 @@ import asyncio
 import json
 import logging
 import time
-from typing import Dict, Set
+from typing import Set
 
 import redis.asyncio as aioredis
 
 from app.news_fetcher import Article, fetch_all_feeds
 from app.processors.summarizer import ArticleSummarizer
+from app.store import store
 
 logger = logging.getLogger(__name__)
+
+_REDIS_CONNECT_TIMEOUT = 3
 
 
 class NewsAgent:
@@ -32,18 +35,37 @@ class NewsAgent:
         self._redis: aioredis.Redis | None = None
         self._running = False
 
-    async def _connect_redis(self) -> None:
-        self._redis = await aioredis.from_url(self._redis_url, decode_responses=True)
+    async def _try_connect_redis(self) -> None:
+        try:
+            client = aioredis.from_url(
+                self._redis_url,
+                decode_responses=True,
+                socket_connect_timeout=_REDIS_CONNECT_TIMEOUT,
+            )
+            await client.ping()
+            self._redis = client
+            logger.info("Connected to Redis at %s", self._redis_url)
+        except Exception as exc:
+            logger.warning("Redis unavailable (%s), using in-memory fallback", exc)
+            self._redis = None
 
     async def _publish(self, article: Article) -> None:
+        data = article.to_dict()
+        # Always persist to the in-memory store so REST endpoints work without Redis
+        store.put(data)
+
         if self._redis is None:
             return
-        payload = json.dumps(article.to_dict())
-        await self._redis.publish(self._channel, payload)
-        # Cache article for HTTP polling clients
-        await self._redis.setex(f"article:{article.id}", 86400, payload)
-        await self._redis.lpush("articles:recent", article.id)
-        await self._redis.ltrim("articles:recent", 0, 199)
+
+        payload = json.dumps(data)
+        try:
+            await self._redis.publish(self._channel, payload)
+            await self._redis.setex(f"article:{article.id}", 86400, payload)
+            await self._redis.lpush("articles:recent", article.id)
+            await self._redis.ltrim("articles:recent", 0, 199)
+        except Exception as exc:
+            logger.warning("Redis write failed (%s) — marking unavailable, in-memory store still updated", exc)
+            self._redis = None
 
     async def _process_batch(self, articles: list[Article]) -> None:
         new_articles = [a for a in articles if a.id not in self._seen_ids]
@@ -59,7 +81,7 @@ class NewsAgent:
             logger.info("[%s] %s (importance=%d)", enriched.category, enriched.title[:80], enriched.importance)
 
     async def run(self) -> None:
-        await self._connect_redis()
+        await self._try_connect_redis()
         self._running = True
         logger.info("News agent started. Fetching every %ds", self._fetch_interval)
         while self._running:
